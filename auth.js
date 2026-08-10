@@ -1,55 +1,24 @@
-import { Router } from "express";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import User from "../models/User.js";
 
-const router = Router();
+export function requireAuth(req, res, next) {
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Missing token" });
 
-function signToken(user) {
-  return jwt.sign(
-    { id: user._id, role: user.role, name: user.name },
-    process.env.JWT_SECRET,
-    { expiresIn: "30d" }
-  );
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = payload; // { id, role, name }
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
 }
 
-router.post("/register", async (req, res) => {
-  try {
-    const { name, email, password, role } = req.body;
-    if (!name || !email || !password || !role) {
-      return res.status(400).json({ error: "name, email, password, and role are required" });
+export function requireRole(role) {
+  return (req, res, next) => {
+    if (req.user?.role !== role) {
+      return res.status(403).json({ error: `This action requires a ${role} account` });
     }
-    if (!["customer", "provider"].includes(role)) {
-      return res.status(400).json({ error: "role must be customer or provider" });
-    }
-
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) return res.status(409).json({ error: "An account with that email already exists" });
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email: email.toLowerCase(), passwordHash, role });
-
-    const token = signToken(user);
-    res.status(201).json({ token, user: { id: user._id, name: user.name, role: user.role } });
-  } catch (err) {
-    res.status(500).json({ error: "Registration failed", detail: err.message });
-  }
-});
-
-router.post("/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: (email || "").toLowerCase() });
-    if (!user) return res.status(401).json({ error: "Invalid email or password" });
-
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) return res.status(401).json({ error: "Invalid email or password" });
-
-    const token = signToken(user);
-    res.json({ token, user: { id: user._id, name: user.name, role: user.role } });
-  } catch (err) {
-    res.status(500).json({ error: "Login failed", detail: err.message });
-  }
-});
-
-export default router;
+    next();
+  };
+}
